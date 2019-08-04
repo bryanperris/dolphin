@@ -14,6 +14,7 @@
 
 #include "VideoCommon/RenderBase.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <cmath>
 #include <memory>
@@ -21,9 +22,10 @@
 #include <string>
 #include <tuple>
 
-#include "imgui.h"
+#include <imgui.h>
 
 #include "Common/Assert.h"
+#include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
 #include "Common/Event.h"
@@ -47,7 +49,6 @@
 #include "Core/Host.h"
 #include "Core/Movie.h"
 
-#include "VideoCommon/AVIDump.h"
 #include "VideoCommon/AbstractFramebuffer.h"
 #include "VideoCommon/AbstractStagingTexture.h"
 #include "VideoCommon/AbstractTexture.h"
@@ -56,6 +57,7 @@
 #include "VideoCommon/CPMemory.h"
 #include "VideoCommon/CommandProcessor.h"
 #include "VideoCommon/FPSCounter.h"
+#include "VideoCommon/FrameDump.h"
 #include "VideoCommon/FramebufferManager.h"
 #include "VideoCommon/ImageWrite.h"
 #include "VideoCommon/NetPlayChatUI.h"
@@ -73,6 +75,7 @@
 #include "VideoCommon/VertexManagerBase.h"
 #include "VideoCommon/VertexShaderManager.h"
 #include "VideoCommon/VideoBackendBase.h"
+#include "VideoCommon/VideoCommon.h"
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/XFMemory.h"
 
@@ -86,7 +89,9 @@ static float AspectToWidescreen(float aspect)
 Renderer::Renderer(int backbuffer_width, int backbuffer_height, float backbuffer_scale,
                    AbstractTextureFormat backbuffer_format)
     : m_backbuffer_width(backbuffer_width), m_backbuffer_height(backbuffer_height),
-      m_backbuffer_scale(backbuffer_scale), m_backbuffer_format(backbuffer_format)
+      m_backbuffer_scale(backbuffer_scale),
+      m_backbuffer_format(backbuffer_format), m_last_xfb_width{MAX_XFB_WIDTH}, m_last_xfb_height{
+                                                                                   MAX_XFB_HEIGHT}
 {
   UpdateActiveConfig();
   UpdateDrawRectangle();
@@ -147,19 +152,13 @@ void Renderer::SetAndClearFramebuffer(AbstractFramebuffer* framebuffer,
   m_current_framebuffer = framebuffer;
 }
 
-std::unique_ptr<AbstractShader> Renderer::CreateShaderFromSource(ShaderStage stage,
-                                                                 const std::string& source)
-{
-  return CreateShaderFromSource(stage, source.c_str(), source.size());
-}
-
 bool Renderer::EFBHasAlphaChannel() const
 {
   return m_prev_efb_format == PEControl::RGBA6_Z24;
 }
 
-void Renderer::ClearScreen(const EFBRectangle& rc, bool colorEnable, bool alphaEnable, bool zEnable,
-                           u32 color, u32 z)
+void Renderer::ClearScreen(const MathUtil::Rectangle<int>& rc, bool colorEnable, bool alphaEnable,
+                           bool zEnable, u32 color, u32 z)
 {
   g_framebuffer_manager->ClearEFB(rc, colorEnable, alphaEnable, zEnable, color, z);
 }
@@ -218,11 +217,11 @@ u32 Renderer::AccessEFB(EFBAccessType type, u32 x, u32 y, u32 poke_data)
     if (bpmem.zcontrol.pixel_format == PEControl::RGB565_Z16)
     {
       // if Z is in 16 bit format you must return a 16 bit integer
-      ret = MathUtil::Clamp<u32>(static_cast<u32>(depth * 65536.0f), 0, 0xFFFF);
+      ret = std::clamp<u32>(static_cast<u32>(depth * 65536.0f), 0, 0xFFFF);
     }
     else
     {
-      ret = MathUtil::Clamp<u32>(static_cast<u32>(depth * 16777216.0f), 0, 0xFFFFFF);
+      ret = std::clamp<u32>(static_cast<u32>(depth * 16777216.0f), 0, 0xFFFFFF);
     }
 
     return ret;
@@ -258,8 +257,8 @@ void Renderer::PokeEFB(EFBAccessType type, const EfbPokeData* points, size_t num
   }
 }
 
-void Renderer::RenderToXFB(u32 xfbAddr, const EFBRectangle& sourceRc, u32 fbStride, u32 fbHeight,
-                           float Gamma)
+void Renderer::RenderToXFB(u32 xfbAddr, const MathUtil::Rectangle<int>& sourceRc, u32 fbStride,
+                           u32 fbHeight, float Gamma)
 {
   CheckFifoRecording();
 
@@ -332,11 +331,11 @@ bool Renderer::CalculateTargetSize()
   return false;
 }
 
-std::tuple<TargetRectangle, TargetRectangle>
-Renderer::ConvertStereoRectangle(const TargetRectangle& rc) const
+std::tuple<MathUtil::Rectangle<int>, MathUtil::Rectangle<int>>
+Renderer::ConvertStereoRectangle(const MathUtil::Rectangle<int>& rc) const
 {
   // Resize target to half its original size
-  TargetRectangle draw_rc = rc;
+  auto draw_rc = rc;
   if (g_ActiveConfig.stereo_mode == StereoMode::TAB)
   {
     // The height may be negative due to flipped rectangles
@@ -352,8 +351,8 @@ Renderer::ConvertStereoRectangle(const TargetRectangle& rc) const
   }
 
   // Create two target rectangle offset to the sides of the backbuffer
-  TargetRectangle left_rc = draw_rc;
-  TargetRectangle right_rc = draw_rc;
+  auto left_rc = draw_rc;
+  auto right_rc = draw_rc;
   if (g_ActiveConfig.stereo_mode == StereoMode::TAB)
   {
     left_rc.top -= m_backbuffer_height / 4;
@@ -529,7 +528,7 @@ void Renderer::DrawDebugText()
   }
 
   if (g_ActiveConfig.bOverlayStats)
-    Statistics::Display();
+    g_stats.Display();
 
   if (g_ActiveConfig.bShowNetPlayMessages && g_netplay_chat_ui)
     g_netplay_chat_ui->Display();
@@ -538,7 +537,7 @@ void Renderer::DrawDebugText()
     g_netplay_golf_ui->Display();
 
   if (g_ActiveConfig.bOverlayProjStats)
-    Statistics::DisplayProj();
+    g_stats.DisplayProj();
 }
 
 float Renderer::CalculateDrawAspectRatio() const
@@ -558,6 +557,40 @@ float Renderer::CalculateDrawAspectRatio() const
   else
   {
     return VideoInterface::GetAspectRatio();
+  }
+}
+
+void Renderer::AdjustRectanglesToFitBounds(MathUtil::Rectangle<int>* target_rect,
+                                           MathUtil::Rectangle<int>* source_rect, int fb_width,
+                                           int fb_height)
+{
+  const int orig_target_width = target_rect->GetWidth();
+  const int orig_target_height = target_rect->GetHeight();
+  const int orig_source_width = source_rect->GetWidth();
+  const int orig_source_height = source_rect->GetHeight();
+  if (target_rect->left < 0)
+  {
+    const int offset = -target_rect->left;
+    target_rect->left = 0;
+    source_rect->left += offset * orig_source_width / orig_target_width;
+  }
+  if (target_rect->right > fb_width)
+  {
+    const int offset = target_rect->right - fb_width;
+    target_rect->right -= offset;
+    source_rect->right -= offset * orig_source_width / orig_target_width;
+  }
+  if (target_rect->top < 0)
+  {
+    const int offset = -target_rect->top;
+    target_rect->top = 0;
+    source_rect->top += offset * orig_source_height / orig_target_height;
+  }
+  if (target_rect->bottom > fb_height)
+  {
+    const int offset = target_rect->bottom - fb_height;
+    target_rect->bottom -= offset;
+    source_rect->bottom -= offset * orig_source_height / orig_target_height;
   }
 }
 
@@ -649,9 +682,9 @@ MathUtil::Rectangle<int> Renderer::ConvertFramebufferRectangle(const MathUtil::R
   return ret;
 }
 
-TargetRectangle Renderer::ConvertEFBRectangle(const EFBRectangle& rc)
+MathUtil::Rectangle<int> Renderer::ConvertEFBRectangle(const MathUtil::Rectangle<int>& rc)
 {
-  TargetRectangle result;
+  MathUtil::Rectangle<int> result;
   result.left = EFBToScaledX(rc.left);
   result.top = EFBToScaledY(rc.top);
   result.right = EFBToScaledX(rc.right);
@@ -979,10 +1012,10 @@ bool Renderer::InitializeImGui()
 
   const std::string vertex_shader_source = GenerateImGuiVertexShader();
   const std::string pixel_shader_source = GenerateImGuiPixelShader();
-  std::unique_ptr<AbstractShader> vertex_shader = CreateShaderFromSource(
-      ShaderStage::Vertex, vertex_shader_source.c_str(), vertex_shader_source.size());
-  std::unique_ptr<AbstractShader> pixel_shader = CreateShaderFromSource(
-      ShaderStage::Pixel, pixel_shader_source.c_str(), pixel_shader_source.size());
+  std::unique_ptr<AbstractShader> vertex_shader =
+      CreateShaderFromSource(ShaderStage::Vertex, vertex_shader_source);
+  std::unique_ptr<AbstractShader> pixel_shader =
+      CreateShaderFromSource(ShaderStage::Pixel, pixel_shader_source);
   if (!vertex_shader || !pixel_shader)
   {
     PanicAlert("Failed to compile imgui shaders");
@@ -1119,6 +1152,15 @@ void Renderer::DrawImGui()
       base_index += cmd.ElemCount;
     }
   }
+
+  // Some capture software (such as OBS) hooks SwapBuffers and uses glBlitFramebuffer to copy our
+  // back buffer just before swap. Because glBlitFramebuffer honors the scissor test, the capture
+  // itself will be clipped to whatever bounds were last set by ImGui, resulting in a rather useless
+  // capture whenever any ImGui windows are open. We'll reset the scissor rectangle to the entire
+  // viewport here to avoid this problem.
+  SetScissorRect(ConvertFramebufferRectangle(
+      MathUtil::Rectangle<int>(0, 0, m_backbuffer_width, m_backbuffer_height),
+      m_current_framebuffer));
 }
 
 std::unique_lock<std::mutex> Renderer::GetImGuiLock()
@@ -1154,8 +1196,7 @@ void Renderer::EndUIFrame()
   BeginImGuiFrame();
 }
 
-void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const EFBRectangle& rc,
-                    u64 ticks)
+void Renderer::Swap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height, u64 ticks)
 {
   const AspectMode suggested = g_ActiveConfig.suggested_aspect_mode;
   if (suggested == AspectMode::Analog || suggested == AspectMode::AnalogWide)
@@ -1188,33 +1229,15 @@ void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const 
   // behind the renderer.
   FlushFrameDump();
 
-  if (xfbAddr && fbWidth && fbStride && fbHeight)
+  if (xfb_addr && fb_width && fb_stride && fb_height)
   {
-    constexpr int force_safe_texture_cache_hash = 0;
     // Get the current XFB from texture cache
-    auto* xfb_entry = g_texture_cache->GetXFBTexture(
-        xfbAddr, fbStride, fbHeight, TextureFormat::XFB, force_safe_texture_cache_hash);
-
+    MathUtil::Rectangle<int> xfb_rect;
+    const auto* xfb_entry =
+        g_texture_cache->GetXFBTexture(xfb_addr, fb_width, fb_height, fb_stride, &xfb_rect);
     if (xfb_entry && xfb_entry->id != m_last_xfb_id)
     {
-      const TextureConfig& texture_config = xfb_entry->texture->GetConfig();
-      m_last_xfb_texture = xfb_entry->texture.get();
       m_last_xfb_id = xfb_entry->id;
-      m_last_xfb_ticks = ticks;
-
-      auto xfb_rect = texture_config.GetRect();
-
-      // It's possible that the returned XFB texture is native resolution
-      // even when we're rendering at higher than native resolution
-      // if the XFB was was loaded entirely from console memory.
-      // If so, adjust the rectangle by native resolution instead of scaled resolution.
-      const u32 native_stride_width_difference = fbStride - fbWidth;
-      if (texture_config.width == xfb_entry->native_width)
-        xfb_rect.right -= native_stride_width_difference;
-      else
-        xfb_rect.right -= EFBToScaledX(native_stride_width_difference);
-
-      m_last_xfb_region = xfb_rect;
 
       // Since we use the common pipelines here and draw vertices if a batch is currently being
       // built by the vertex loader, we end up trampling over its pointer, as we share the buffer
@@ -1236,7 +1259,14 @@ void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const 
       {
         BindBackbuffer({{0.0f, 0.0f, 0.0f, 1.0f}});
         UpdateDrawRectangle();
-        RenderXFBToScreen(xfb_entry->texture.get(), xfb_rect);
+
+        // Adjust the source rectangle instead of using an oversized viewport to render the XFB.
+        auto render_target_rc = GetTargetRectangle();
+        auto render_source_rc = xfb_rect;
+        AdjustRectanglesToFitBounds(&render_target_rc, &render_source_rc, m_backbuffer_width,
+                                    m_backbuffer_height);
+        RenderXFBToScreen(render_target_rc, xfb_entry->texture.get(), render_source_rc);
+
         DrawImGui();
 
         // Present to the window system.
@@ -1247,23 +1277,23 @@ void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const 
 
         // Update the window size based on the frame that was just rendered.
         // Due to depending on guest state, we need to call this every frame.
-        SetWindowSize(texture_config.width, texture_config.height);
+        SetWindowSize(xfb_rect.GetWidth(), xfb_rect.GetHeight());
       }
 
       m_fps_counter.Update();
 
       DolphinAnalytics::PerformanceSample perf_sample;
       perf_sample.speed_ratio = SystemTimers::GetEstimatedEmulationPerformance();
-      perf_sample.num_prims = stats.thisFrame.numPrims + stats.thisFrame.numDLPrims;
-      perf_sample.num_draw_calls = stats.thisFrame.numDrawCalls;
-      DolphinAnalytics::Instance()->ReportPerformanceInfo(std::move(perf_sample));
+      perf_sample.num_prims = g_stats.this_frame.num_prims + g_stats.this_frame.num_dl_prims;
+      perf_sample.num_draw_calls = g_stats.this_frame.num_draw_calls;
+      DolphinAnalytics::Instance().ReportPerformanceInfo(std::move(perf_sample));
 
       if (IsFrameDumping())
-        DumpCurrentFrame();
+        DumpCurrentFrame(xfb_entry->texture.get(), xfb_rect, ticks);
 
       // Begin new frame
       m_frame_count++;
-      stats.ResetFrame();
+      g_stats.ResetFrame();
       g_shader_cache->RetrieveAsyncShaders();
       g_vertex_manager->OnEndFrame();
       BeginImGuiFrame();
@@ -1295,8 +1325,11 @@ void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const 
     }
 
     // Update our last xfb values
-    m_last_xfb_width = (fbStride < 1 || fbStride > MAX_XFB_WIDTH) ? MAX_XFB_WIDTH : fbStride;
-    m_last_xfb_height = (fbHeight < 1 || fbHeight > MAX_XFB_HEIGHT) ? MAX_XFB_HEIGHT : fbHeight;
+    m_last_xfb_addr = xfb_addr;
+    m_last_xfb_ticks = ticks;
+    m_last_xfb_width = fb_width;
+    m_last_xfb_stride = fb_stride;
+    m_last_xfb_height = fb_height;
   }
   else
   {
@@ -1304,21 +1337,22 @@ void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const 
   }
 }
 
-void Renderer::RenderXFBToScreen(const AbstractTexture* texture, const EFBRectangle& rc)
+void Renderer::RenderXFBToScreen(const MathUtil::Rectangle<int>& target_rc,
+                                 const AbstractTexture* source_texture,
+                                 const MathUtil::Rectangle<int>& source_rc)
 {
-  const auto target_rc = GetTargetRectangle();
   if (g_ActiveConfig.stereo_mode == StereoMode::SBS ||
       g_ActiveConfig.stereo_mode == StereoMode::TAB)
   {
-    TargetRectangle left_rc, right_rc;
+    MathUtil::Rectangle<int> left_rc, right_rc;
     std::tie(left_rc, right_rc) = ConvertStereoRectangle(target_rc);
 
-    m_post_processor->BlitFromTexture(left_rc, rc, texture, 0);
-    m_post_processor->BlitFromTexture(right_rc, rc, texture, 1);
+    m_post_processor->BlitFromTexture(left_rc, source_rc, source_texture, 0);
+    m_post_processor->BlitFromTexture(right_rc, source_rc, source_texture, 1);
   }
   else
   {
-    m_post_processor->BlitFromTexture(target_rc, rc, texture, 0);
+    m_post_processor->BlitFromTexture(target_rc, source_rc, source_texture, 0);
   }
 }
 
@@ -1333,8 +1367,11 @@ bool Renderer::IsFrameDumping()
   return false;
 }
 
-void Renderer::DumpCurrentFrame()
+void Renderer::DumpCurrentFrame(const AbstractTexture* src_texture,
+                                const MathUtil::Rectangle<int>& src_rect, u64 ticks)
 {
+  int source_width = src_rect.GetWidth();
+  int source_height = src_rect.GetHeight();
   int target_width, target_height;
   if (!g_ActiveConfig.bInternalResolutionFrameDumps && !IsHeadless())
   {
@@ -1344,37 +1381,32 @@ void Renderer::DumpCurrentFrame()
   }
   else
   {
-    std::tie(target_width, target_height) = CalculateOutputDimensions(
-        m_last_xfb_texture->GetConfig().width, m_last_xfb_texture->GetConfig().height);
+    std::tie(target_width, target_height) = CalculateOutputDimensions(source_width, source_height);
   }
 
   // We only need to render a copy if we need to stretch/scale the XFB copy.
-  const AbstractTexture* source_tex = m_last_xfb_texture;
-  MathUtil::Rectangle<int> source_rect = m_last_xfb_region;
-  if (source_rect.GetWidth() != target_width || source_rect.GetHeight() != target_height)
+  MathUtil::Rectangle<int> copy_rect = src_rect;
+  if (source_width != target_width || source_height != target_height)
   {
     if (!CheckFrameDumpRenderTexture(target_width, target_height))
       return;
 
-    source_tex = m_frame_dump_render_texture.get();
-    source_rect = MathUtil::Rectangle<int>(0, 0, target_width, target_height);
-    ScaleTexture(m_frame_dump_render_framebuffer.get(), source_rect, m_last_xfb_texture,
-                 m_last_xfb_region);
+    ScaleTexture(m_frame_dump_render_framebuffer.get(), m_frame_dump_render_framebuffer->GetRect(),
+                 src_texture, src_rect);
+    src_texture = m_frame_dump_render_texture.get();
+    copy_rect = src_texture->GetRect();
   }
 
-  // Index 0 was just sent to AVI dump. Swap with the second texture.
+  // Index 0 was just sent to FFMPEG dump. Swap with the second texture.
   if (m_frame_dump_readback_textures[0])
     std::swap(m_frame_dump_readback_textures[0], m_frame_dump_readback_textures[1]);
 
   if (!CheckFrameDumpReadbackTexture(target_width, target_height))
     return;
 
-  const auto converted_region =
-      ConvertFramebufferRectangle(source_rect, source_tex->GetWidth(), source_tex->GetHeight());
-  m_frame_dump_readback_textures[0]->CopyFromTexture(
-      source_tex, converted_region, 0, 0,
-      MathUtil::Rectangle<int>(0, 0, target_width, target_height));
-  m_last_frame_state = AVIDump::FetchState(m_last_xfb_ticks);
+  m_frame_dump_readback_textures[0]->CopyFromTexture(src_texture, copy_rect, 0, 0,
+                                                     m_frame_dump_readback_textures[0]->GetRect());
+  m_last_frame_state = FrameDump::FetchState(ticks);
   m_last_frame_exported = true;
 }
 
@@ -1468,7 +1500,8 @@ void Renderer::ShutdownFrameDumping()
     tex.reset();
 }
 
-void Renderer::DumpFrameData(const u8* data, int w, int h, int stride, const AVIDump::Frame& state)
+void Renderer::DumpFrameData(const u8* data, int w, int h, int stride,
+                             const FrameDump::Frame& state)
 {
   m_frame_dump_config = FrameDumpConfig{data, w, h, stride, state};
 
@@ -1497,16 +1530,16 @@ void Renderer::FinishFrameData()
 void Renderer::RunFrameDumps()
 {
   Common::SetCurrentThreadName("FrameDumping");
-  bool dump_to_avi = !g_ActiveConfig.bDumpFramesAsImages;
+  bool dump_to_ffmpeg = !g_ActiveConfig.bDumpFramesAsImages;
   bool frame_dump_started = false;
 
-// If Dolphin was compiled without libav, we only support dumping to images.
+// If Dolphin was compiled without ffmpeg, we only support dumping to images.
 #if !defined(HAVE_FFMPEG)
-  if (dump_to_avi)
+  if (dump_to_ffmpeg)
   {
-    WARN_LOG(VIDEO, "AVI frame dump requested, but Dolphin was compiled without libav. "
-                    "Frame dump will be saved as images instead.");
-    dump_to_avi = false;
+    WARN_LOG(VIDEO, "FrameDump: Dolphin was not compiled with FFmpeg, using fallback option. "
+                    "Frames will be saved as PNG images instead.");
+    dump_to_ffmpeg = false;
   }
 #endif
 
@@ -1536,8 +1569,8 @@ void Renderer::RunFrameDumps()
     {
       if (!frame_dump_started)
       {
-        if (dump_to_avi)
-          frame_dump_started = StartFrameDumpToAVI(config);
+        if (dump_to_ffmpeg)
+          frame_dump_started = StartFrameDumpToFFMPEG(config);
         else
           frame_dump_started = StartFrameDumpToImage(config);
 
@@ -1549,8 +1582,8 @@ void Renderer::RunFrameDumps()
       // If we failed to start frame dumping, don't write a frame.
       if (frame_dump_started)
       {
-        if (dump_to_avi)
-          DumpFrameToAVI(config);
+        if (dump_to_ffmpeg)
+          DumpFrameToFFMPEG(config);
         else
           DumpFrameToImage(config);
       }
@@ -1562,40 +1595,40 @@ void Renderer::RunFrameDumps()
   if (frame_dump_started)
   {
     // No additional cleanup is needed when dumping to images.
-    if (dump_to_avi)
-      StopFrameDumpToAVI();
+    if (dump_to_ffmpeg)
+      StopFrameDumpToFFMPEG();
   }
 }
 
 #if defined(HAVE_FFMPEG)
 
-bool Renderer::StartFrameDumpToAVI(const FrameDumpConfig& config)
+bool Renderer::StartFrameDumpToFFMPEG(const FrameDumpConfig& config)
 {
-  return AVIDump::Start(config.width, config.height);
+  return FrameDump::Start(config.width, config.height);
 }
 
-void Renderer::DumpFrameToAVI(const FrameDumpConfig& config)
+void Renderer::DumpFrameToFFMPEG(const FrameDumpConfig& config)
 {
-  AVIDump::AddFrame(config.data, config.width, config.height, config.stride, config.state);
+  FrameDump::AddFrame(config.data, config.width, config.height, config.stride, config.state);
 }
 
-void Renderer::StopFrameDumpToAVI()
+void Renderer::StopFrameDumpToFFMPEG()
 {
-  AVIDump::Stop();
+  FrameDump::Stop();
 }
 
 #else
 
-bool Renderer::StartFrameDumpToAVI(const FrameDumpConfig& config)
+bool Renderer::StartFrameDumpToFFMPEG(const FrameDumpConfig& config)
 {
   return false;
 }
 
-void Renderer::DumpFrameToAVI(const FrameDumpConfig& config)
+void Renderer::DumpFrameToFFMPEG(const FrameDumpConfig& config)
 {
 }
 
-void Renderer::StopFrameDumpToAVI()
+void Renderer::StopFrameDumpToFFMPEG()
 {
 }
 
@@ -1650,6 +1683,27 @@ bool Renderer::UseVertexDepthRange() const
   // If an oversized depth range or a ztexture is used, we need to calculate the depth range
   // in the vertex shader.
   return fabs(xfmem.viewport.zRange) > 16777215.0f || fabs(xfmem.viewport.farZ) > 16777215.0f;
+}
+
+void Renderer::DoState(PointerWrap& p)
+{
+  p.Do(m_aspect_wide);
+  p.Do(m_frame_count);
+  p.Do(m_prev_efb_format);
+  p.Do(m_last_xfb_ticks);
+  p.Do(m_last_xfb_addr);
+  p.Do(m_last_xfb_width);
+  p.Do(m_last_xfb_stride);
+  p.Do(m_last_xfb_height);
+
+  if (p.GetMode() == PointerWrap::MODE_READ)
+  {
+    // Force the next xfb to be displayed.
+    m_last_xfb_id = std::numeric_limits<u64>::max();
+
+    // And actually display it.
+    Swap(m_last_xfb_addr, m_last_xfb_width, m_last_xfb_stride, m_last_xfb_height, m_last_xfb_ticks);
+  }
 }
 
 std::unique_ptr<VideoCommon::AsyncShaderCompiler> Renderer::CreateAsyncShaderCompiler()

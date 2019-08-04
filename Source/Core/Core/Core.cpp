@@ -21,6 +21,7 @@
 #include "Common/CPUDetect.h"
 #include "Common/CommonPaths.h"
 #include "Common/CommonTypes.h"
+#include "Common/Event.h"
 #include "Common/FileUtil.h"
 #include "Common/Flag.h"
 #include "Common/Logging/LogManager.h"
@@ -30,18 +31,14 @@
 #include "Common/StringUtil.h"
 #include "Common/Thread.h"
 #include "Common/Timer.h"
+#include "Common/Version.h"
 
 #include "Core/Analytics.h"
+#include "Core/Boot/Boot.h"
 #include "Core/BootManager.h"
 #include "Core/ConfigManager.h"
 #include "Core/CoreTiming.h"
 #include "Core/DSPEmulator.h"
-#include "Core/Host.h"
-#include "Core/MemTools.h"
-#ifdef USE_MEMORYWATCHER
-#include "Core/MemoryWatcher.h"
-#endif
-#include "Core/Boot/Boot.h"
 #include "Core/FifoPlayer/FifoPlayer.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HW/CPU.h"
@@ -53,7 +50,9 @@
 #include "Core/HW/SystemTimers.h"
 #include "Core/HW/VideoInterface.h"
 #include "Core/HW/Wiimote.h"
+#include "Core/Host.h"
 #include "Core/IOS/IOS.h"
+#include "Core/MemTools.h"
 #include "Core/Movie.h"
 #include "Core/NetPlayClient.h"
 #include "Core/NetPlayProto.h"
@@ -65,6 +64,10 @@
 
 #ifdef USE_GDBSTUB
 #include "Core/PowerPC/GDBStub.h"
+#endif
+
+#ifdef USE_MEMORYWATCHER
+#include "Core/MemoryWatcher.h"
 #endif
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
@@ -97,6 +100,10 @@ static bool s_request_refresh_info = false;
 static bool s_is_throttler_temp_disabled = false;
 static bool s_frame_step = false;
 
+#ifdef USE_MEMORYWATCHER
+static std::unique_ptr<MemoryWatcher> s_memory_watcher;
+#endif
+
 struct HostJob
 {
   std::function<void()> job;
@@ -104,6 +111,7 @@ struct HostJob
 };
 static std::mutex s_host_jobs_lock;
 static std::queue<HostJob> s_host_jobs_queue;
+static Common::Event s_cpu_thread_job_finished;
 
 static thread_local bool tls_is_cpu_thread = false;
 
@@ -123,6 +131,14 @@ void FrameUpdateOnCPUThread()
 {
   if (NetPlay::IsNetPlayRunning())
     NetPlay::NetPlayClient::SendTimeBase();
+}
+
+void OnFrameEnd()
+{
+#ifdef USE_MEMORYWATCHER
+  if (s_memory_watcher)
+    s_memory_watcher->Step();
+#endif
 }
 
 // Display messages and return values
@@ -271,7 +287,7 @@ void Stop()  // - Hammertime!
   ResetRumble();
 
 #ifdef USE_MEMORYWATCHER
-  MemoryWatcher::Shutdown();
+  s_memory_watcher.reset();
 #endif
 }
 
@@ -310,13 +326,13 @@ static void CpuThread(const std::optional<std::string>& savestate_path, bool del
     Common::SetCurrentThreadName("CPU-GPU thread");
 
   // This needs to be delayed until after the video backend is ready.
-  DolphinAnalytics::Instance()->ReportGameStart();
+  DolphinAnalytics::Instance().ReportGameStart();
 
   if (_CoreParameter.bFastmem)
     EMM::InstallExceptionHandler();  // Let's run under memory watch
 
 #ifdef USE_MEMORYWATCHER
-  MemoryWatcher::Init();
+  s_memory_watcher = std::make_unique<MemoryWatcher>();
 #endif
 
   if (savestate_path)
@@ -419,6 +435,7 @@ static void EmuThread(std::unique_ptr<BootParameters> boot, WindowSystemInfo wsi
   Common::ScopeGuard movie_guard{Movie::Shutdown};
 
   HW::Init();
+
   Common::ScopeGuard hw_guard{[] {
     // We must set up this flag before executing HW::Shutdown()
     s_hardware_initialized = false;
@@ -757,6 +774,45 @@ void RunAsCPUThread(std::function<void()> function)
     PauseAndLock(false, was_unpaused);
 }
 
+void RunOnCPUThread(std::function<void()> function, bool wait_for_completion)
+{
+  // If the CPU thread is not running, assume there is no active CPU thread we can race against.
+  if (!IsRunning() || IsCPUThread())
+  {
+    function();
+    return;
+  }
+
+  // Pause the CPU (set it to stepping mode).
+  const bool was_running = PauseAndLock(true, true);
+
+  // Queue the job function.
+  if (wait_for_completion)
+  {
+    // Trigger the event after executing the function.
+    s_cpu_thread_job_finished.Reset();
+    CPU::AddCPUThreadJob([&function]() {
+      function();
+      s_cpu_thread_job_finished.Set();
+    });
+  }
+  else
+  {
+    CPU::AddCPUThreadJob(std::move(function));
+  }
+
+  // Release the CPU thread, and let it execute the callback.
+  PauseAndLock(false, was_running);
+
+  // If we're waiting for completion, block until the event fires.
+  if (wait_for_completion)
+  {
+    // Periodically yield to the UI thread, so we don't deadlock.
+    while (!s_cpu_thread_job_finished.WaitFor(std::chrono::milliseconds(10)))
+      Host_YieldToUI();
+  }
+}
+
 // Display FPS info
 // This should only be called from VI
 void VideoThrottle()
@@ -852,7 +908,8 @@ void UpdateTitle()
     }
   }
 
-  std::string message = StringFromFormat("%s | %s", SSettings.c_str(), SFPS.c_str());
+  std::string message = StringFromFormat("%s | %s | %s", Common::scm_rev_str.c_str(),
+                                         SSettings.c_str(), SFPS.c_str());
   if (SConfig::GetInstance().m_show_active_title)
   {
     const std::string& title = SConfig::GetInstance().GetTitleDescription();

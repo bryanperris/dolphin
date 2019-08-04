@@ -30,7 +30,7 @@ enum class NunchukGroup
   Shake
 };
 
-class Nunchuk : public EncryptedExtension
+class Nunchuk : public Extension1stParty
 {
 public:
   union ButtonFormat
@@ -78,46 +78,28 @@ public:
 
   ControllerEmu::ControlGroup* GetGroup(NunchukGroup group);
 
-  enum
-  {
-    BUTTON_C = 0x02,
-    BUTTON_Z = 0x01,
-  };
+  static constexpr u8 BUTTON_C = 0x02;
+  static constexpr u8 BUTTON_Z = 0x01;
 
-  enum
-  {
-    ACCEL_ZERO_G = 0x80,
-    ACCEL_ONE_G = 0xB3,
-  };
+  static constexpr u8 ACCEL_ZERO_G = 0x80;
+  static constexpr u8 ACCEL_ONE_G = 0xB3;
 
-  enum
-  {
-    STICK_CENTER = 0x80,
-    STICK_RADIUS = 0x7F,
-    STICK_GATE_RADIUS = 0x52,
-  };
+  static constexpr u8 STICK_CENTER = 0x80;
+  static constexpr u8 STICK_RADIUS = 0x7F;
+  static constexpr u8 STICK_GATE_RADIUS = 0x52;
 
   void LoadDefaults(const ControllerInterface& ciface) override;
 
 private:
   ControllerEmu::Tilt* m_tilt;
-
   ControllerEmu::Force* m_swing;
-
-  ControllerEmu::Buttons* m_shake;
-  ControllerEmu::Buttons* m_shake_soft;
-  ControllerEmu::Buttons* m_shake_hard;
-
+  ControllerEmu::Shake* m_shake;
   ControllerEmu::Buttons* m_buttons;
   ControllerEmu::AnalogStick* m_stick;
 
   // Dynamics:
   MotionState m_swing_state;
   RotationalState m_tilt_state;
-
-  // TODO: kill
-  std::array<u8, 3> m_shake_step{};
-  std::array<u8, 3> m_shake_soft_step{};
-  std::array<u8, 3> m_shake_hard_step{};
+  PositionalState m_shake_state;
 };
 }  // namespace WiimoteEmu

@@ -116,19 +116,19 @@ void GCMemcardManager::CreateWidgets()
 void GCMemcardManager::ConnectWidgets()
 {
   connect(m_button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
-  connect(m_select_button, &QPushButton::pressed, this, [this] { SetActiveSlot(!m_active_slot); });
-  connect(m_export_button, &QPushButton::pressed, this, [this] { ExportFiles(true); });
-  connect(m_export_all_button, &QPushButton::pressed, this, &GCMemcardManager::ExportAllFiles);
-  connect(m_delete_button, &QPushButton::pressed, this, &GCMemcardManager::DeleteFiles);
-  connect(m_import_button, &QPushButton::pressed, this, &GCMemcardManager::ImportFile);
-  connect(m_copy_button, &QPushButton::pressed, this, &GCMemcardManager::CopyFiles);
-  connect(m_fix_checksums_button, &QPushButton::pressed, this, &GCMemcardManager::FixChecksums);
+  connect(m_select_button, &QPushButton::clicked, [this] { SetActiveSlot(!m_active_slot); });
+  connect(m_export_button, &QPushButton::clicked, [this] { ExportFiles(true); });
+  connect(m_export_all_button, &QPushButton::clicked, this, &GCMemcardManager::ExportAllFiles);
+  connect(m_delete_button, &QPushButton::clicked, this, &GCMemcardManager::DeleteFiles);
+  connect(m_import_button, &QPushButton::clicked, this, &GCMemcardManager::ImportFile);
+  connect(m_copy_button, &QPushButton::clicked, this, &GCMemcardManager::CopyFiles);
+  connect(m_fix_checksums_button, &QPushButton::clicked, this, &GCMemcardManager::FixChecksums);
 
   for (int slot = 0; slot < SLOT_COUNT; slot++)
   {
-    connect(m_slot_file_edit[slot], &QLineEdit::textChanged, this,
+    connect(m_slot_file_edit[slot], &QLineEdit::textChanged,
             [this, slot](const QString& path) { SetSlotFile(slot, path); });
-    connect(m_slot_file_button[slot], &QPushButton::pressed, this,
+    connect(m_slot_file_button[slot], &QPushButton::clicked,
             [this, slot] { SetSlotFileInteractive(slot); });
     connect(m_slot_table[slot], &QTableWidget::itemSelectionChanged, this,
             &GCMemcardManager::UpdateActions);
@@ -300,7 +300,9 @@ void GCMemcardManager::ExportFiles(bool prompt)
              QStringLiteral("/%1").arg(QString::fromStdString(gci_filename));
     }
 
-    if (!memcard->ExportGci(file_index, path.toStdString(), ""))
+    // TODO: This is obviously intended to check for success instead.
+    const auto exportRetval = memcard->ExportGci(file_index, path.toStdString(), "");
+    if (exportRetval == GCMemcardExportFileRetVal::UNUSED)
     {
       File::Delete(path.toStdString());
     }
@@ -328,9 +330,9 @@ void GCMemcardManager::ImportFile()
   if (path.isEmpty())
     return;
 
-  const auto result = m_slot_memcard[m_active_slot]->ImportGci(path.toStdString(), "");
+  const auto result = m_slot_memcard[m_active_slot]->ImportGci(path.toStdString());
 
-  if (result != SUCCESS)
+  if (result != GCMemcardImportFileRetVal::SUCCESS)
   {
     ModalMessageBox::critical(this, tr("Import failed"), tr("Failed to import \"%1\".").arg(path));
     return;
@@ -356,7 +358,7 @@ void GCMemcardManager::CopyFiles()
 
     const auto result = m_slot_memcard[!m_active_slot]->CopyFrom(*memcard, file_index);
 
-    if (result != SUCCESS)
+    if (result != GCMemcardImportFileRetVal::SUCCESS)
     {
       ModalMessageBox::warning(this, tr("Copy failed"), tr("Failed to copy file"));
     }
@@ -400,7 +402,7 @@ void GCMemcardManager::DeleteFiles()
 
   for (int file_index : file_indices)
   {
-    if (memcard->RemoveFile(file_index) != SUCCESS)
+    if (memcard->RemoveFile(file_index) != GCMemcardRemoveFileRetVal::SUCCESS)
     {
       ModalMessageBox::warning(this, tr("Remove failed"), tr("Failed to remove file"));
     }

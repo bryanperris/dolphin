@@ -38,6 +38,7 @@
 #include "Core/Core.h"
 #include "Core/HW/EXI/EXI.h"
 #include "Core/HW/SI/SI.h"
+#include "Core/HW/SI/SI_Device.h"
 #include "Core/HW/Sram.h"
 #include "Core/HW/WiimoteReal/WiimoteReal.h"
 #include "Core/Movie.h"
@@ -361,8 +362,10 @@ bool BootCore(std::unique_ptr<BootParameters> boot, const WindowSystemInfo& wsi)
     StartUp.m_OCFactor = netplay_settings.m_OCFactor;
     StartUp.m_EXIDevice[0] = netplay_settings.m_EXIDevice[0];
     StartUp.m_EXIDevice[1] = netplay_settings.m_EXIDevice[1];
+    StartUp.m_EXIDevice[2] = netplay_settings.m_EXIDevice[2];
     config_cache.bSetEXIDevice[0] = true;
     config_cache.bSetEXIDevice[1] = true;
+    config_cache.bSetEXIDevice[2] = true;
     StartUp.bFPRF = netplay_settings.m_FPRF;
     StartUp.bAccurateNaNs = netplay_settings.m_AccurateNaNs;
     StartUp.bSyncGPUOnSkipIdleHack = netplay_settings.m_SyncOnSkipIdle;

@@ -37,7 +37,6 @@ public:
 
   explicit MenuBar(QWidget* parent = nullptr);
 
-  void UpdateStateSlotMenu();
   void UpdateToolsMenu(bool emulation_started);
 
   QMenu* GetListColumnsMenu() const { return m_cols_menu; }
@@ -61,6 +60,7 @@ signals:
   void FrameAdvance();
   void Screenshot();
   void StartNetPlay();
+  void BrowseNetPlay();
   void StateLoad();
   void StateSave();
   void StateLoadSlot();
@@ -139,6 +139,8 @@ private:
   void AddJITMenu();
   void AddSymbolsMenu();
 
+  void UpdateStateSlotMenu();
+
   void InstallWAD();
   void ImportWiiSave();
   void ExportWiiSaves();
@@ -190,6 +192,7 @@ private:
   QAction* m_ntscj_ipl;
   QAction* m_ntscu_ipl;
   QAction* m_pal_ipl;
+  QMenu* m_manage_nand_menu;
   QAction* m_import_backup;
   QAction* m_check_nand;
   QAction* m_extract_certificates;

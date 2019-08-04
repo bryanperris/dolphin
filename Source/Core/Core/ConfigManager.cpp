@@ -19,6 +19,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/Config/Config.h"
 #include "Common/FileUtil.h"
+#include "Common/IniFile.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 #include "Common/NandPaths.h"
@@ -34,7 +35,10 @@
 #include "Core/FifoPlayer/FifoDataFile.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HW/DVD/DVDInterface.h"
+#include "Core/HW/EXI/EXI_Device.h"
 #include "Core/HW/SI/SI.h"
+#include "Core/HW/SI/SI_Device.h"
+#include "Core/Host.h"
 #include "Core/IOS/ES/ES.h"
 #include "Core/IOS/ES/Formats.h"
 #include "Core/PatchEngine.h"
@@ -45,7 +49,7 @@
 
 #include "DiscIO/Enums.h"
 #include "DiscIO/Volume.h"
-#include "DiscIO/WiiWad.h"
+#include "DiscIO/VolumeWad.h"
 
 SConfig* SConfig::m_Instance;
 
@@ -80,7 +84,6 @@ void SConfig::SaveSettings()
 
   SaveGeneralSettings(ini);
   SaveInterfaceSettings(ini);
-  SaveDisplaySettings(ini);
   SaveGameListSettings(ini);
   SaveCoreSettings(ini);
   SaveMovieSettings(ini);
@@ -149,22 +152,6 @@ void SConfig::SaveInterfaceSettings(IniFile& ini)
   interface->Set("ThemeName", theme_name);
   interface->Set("PauseOnFocusLost", m_PauseOnFocusLost);
   interface->Set("DebugModeEnabled", bEnableDebugging);
-}
-
-void SConfig::SaveDisplaySettings(IniFile& ini)
-{
-  IniFile::Section* display = ini.GetOrCreateSection("Display");
-
-  display->Set("FullscreenDisplayRes", strFullscreenResolution);
-  display->Set("Fullscreen", bFullscreen);
-  display->Set("RenderToMain", bRenderToMain);
-  display->Set("RenderWindowXPos", iRenderWindowXPos);
-  display->Set("RenderWindowYPos", iRenderWindowYPos);
-  display->Set("RenderWindowWidth", iRenderWindowWidth);
-  display->Set("RenderWindowHeight", iRenderWindowHeight);
-  display->Set("RenderWindowAutoSize", bRenderWindowAutoSize);
-  display->Set("KeepWindowOnTop", bKeepWindowOnTop);
-  display->Set("DisableScreenSaver", bDisableScreenSaver);
 }
 
 void SConfig::SaveGameListSettings(IniFile& ini)
@@ -378,7 +365,6 @@ void SConfig::LoadSettings()
 
   LoadGeneralSettings(ini);
   LoadInterfaceSettings(ini);
-  LoadDisplaySettings(ini);
   LoadGameListSettings(ini);
   LoadCoreSettings(ini);
   LoadMovieSettings(ini);
@@ -438,22 +424,6 @@ void SConfig::LoadInterfaceSettings(IniFile& ini)
   interface->Get("ThemeName", &theme_name, DEFAULT_THEME_DIR);
   interface->Get("PauseOnFocusLost", &m_PauseOnFocusLost, false);
   interface->Get("DebugModeEnabled", &bEnableDebugging, false);
-}
-
-void SConfig::LoadDisplaySettings(IniFile& ini)
-{
-  IniFile::Section* display = ini.GetOrCreateSection("Display");
-
-  display->Get("Fullscreen", &bFullscreen, false);
-  display->Get("FullscreenDisplayRes", &strFullscreenResolution, "Auto");
-  display->Get("RenderToMain", &bRenderToMain, false);
-  display->Get("RenderWindowXPos", &iRenderWindowXPos, -1);
-  display->Get("RenderWindowYPos", &iRenderWindowYPos, -1);
-  display->Get("RenderWindowWidth", &iRenderWindowWidth, 640);
-  display->Get("RenderWindowHeight", &iRenderWindowHeight, 480);
-  display->Get("RenderWindowAutoSize", &bRenderWindowAutoSize, false);
-  display->Get("KeepWindowOnTop", &bKeepWindowOnTop, false);
-  display->Get("DisableScreenSaver", &bDisableScreenSaver, true);
 }
 
 void SConfig::LoadGameListSettings(IniFile& ini)
@@ -680,7 +650,7 @@ void SConfig::LoadJitDebugSettings(IniFile& ini)
 
 void SConfig::ResetRunningGameMetadata()
 {
-  SetRunningGameMetadata("00000000", "", 0, 0);
+  SetRunningGameMetadata("00000000", "", 0, 0, DiscIO::Country::Unknown);
 }
 
 void SConfig::SetRunningGameMetadata(const DiscIO::Volume& volume,
@@ -689,17 +659,18 @@ void SConfig::SetRunningGameMetadata(const DiscIO::Volume& volume,
   if (partition == volume.GetGamePartition())
   {
     SetRunningGameMetadata(volume.GetGameID(), volume.GetGameTDBID(),
-                           volume.GetTitleID().value_or(0), volume.GetRevision().value_or(0));
+                           volume.GetTitleID().value_or(0), volume.GetRevision().value_or(0),
+                           volume.GetCountry());
   }
   else
   {
     SetRunningGameMetadata(volume.GetGameID(partition), volume.GetGameTDBID(),
                            volume.GetTitleID(partition).value_or(0),
-                           volume.GetRevision(partition).value_or(0));
+                           volume.GetRevision(partition).value_or(0), volume.GetCountry());
   }
 }
 
-void SConfig::SetRunningGameMetadata(const IOS::ES::TMDReader& tmd)
+void SConfig::SetRunningGameMetadata(const IOS::ES::TMDReader& tmd, DiscIO::Platform platform)
 {
   const u64 tmd_title_id = tmd.GetTitleId();
 
@@ -707,16 +678,19 @@ void SConfig::SetRunningGameMetadata(const IOS::ES::TMDReader& tmd)
   // the disc header instead of the TMD. They can differ.
   // (IOS HLE ES calls us with a TMDReader rather than a volume when launching
   // a disc game, because ES has no reason to be accessing the disc directly.)
-  if (!DVDInterface::UpdateRunningGameMetadata(tmd_title_id))
+  if (platform == DiscIO::Platform::WiiWAD ||
+      !DVDInterface::UpdateRunningGameMetadata(tmd_title_id))
   {
     // If not launching a disc game, just read everything from the TMD.
-    SetRunningGameMetadata(tmd.GetGameID(), tmd.GetGameTDBID(), tmd_title_id,
-                           tmd.GetTitleVersion());
+    const DiscIO::Country country = DiscIO::CountryCodeToCountry(
+        static_cast<u8>(tmd_title_id), platform, tmd.GetRegion(), tmd.GetTitleVersion());
+    SetRunningGameMetadata(tmd.GetGameID(), tmd.GetGameTDBID(), tmd_title_id, tmd.GetTitleVersion(),
+                           country);
   }
 }
 
 void SConfig::SetRunningGameMetadata(const std::string& game_id, const std::string& gametdb_id,
-                                     u64 title_id, u16 revision)
+                                     u64 title_id, u16 revision, DiscIO::Country country)
 {
   const bool was_changed = m_game_id != game_id || m_gametdb_id != gametdb_id ||
                            m_title_id != title_id || m_revision != revision;
@@ -749,8 +723,12 @@ void SConfig::SetRunningGameMetadata(const std::string& game_id, const std::stri
   }
 
   const Core::TitleDatabase title_database;
-  m_title_description = title_database.Describe(m_gametdb_id, GetCurrentLanguage(bWii));
+  const DiscIO::Language language = !bWii && country == DiscIO::Country::Japan ?
+                                        DiscIO::Language::Japanese :
+                                        GetCurrentLanguage(bWii);
+  m_title_description = title_database.Describe(m_gametdb_id, language);
   NOTICE_LOG(CORE, "Active title: %s", m_title_description.c_str());
+  Host_TitleChanged();
 
   Config::AddLayer(ConfigLoaders::GenerateGlobalGameConfigLoader(game_id, revision));
   Config::AddLayer(ConfigLoaders::GenerateLocalGameConfigLoader(game_id, revision));
@@ -758,12 +736,16 @@ void SConfig::SetRunningGameMetadata(const std::string& game_id, const std::stri
   if (Core::IsRunning())
   {
     // TODO: have a callback mechanism for title changes?
-    g_symbolDB.Clear();
+    if (!g_symbolDB.IsEmpty())
+    {
+      g_symbolDB.Clear();
+      Host_NotifyMapLoaded();
+    }
     CBoot::LoadMapFromFilename();
     HLE::Reload();
     PatchEngine::Reload();
     HiresTexture::Update();
-    DolphinAnalytics::Instance()->ReportGameStart();
+    DolphinAnalytics::Instance().ReportGameStart();
   }
 }
 
@@ -906,9 +888,9 @@ struct SetGameMetadata
     return true;
   }
 
-  bool operator()(const DiscIO::WiiWAD& wad) const
+  bool operator()(const DiscIO::VolumeWAD& wad) const
   {
-    if (!wad.IsValid() || !wad.GetTMD().IsValid())
+    if (!wad.GetTMD().IsValid())
     {
       PanicAlertT("This WAD is not valid.");
       return false;
@@ -920,7 +902,7 @@ struct SetGameMetadata
     }
 
     const IOS::ES::TMDReader& tmd = wad.GetTMD();
-    config->SetRunningGameMetadata(tmd);
+    config->SetRunningGameMetadata(tmd, DiscIO::Platform::WiiWAD);
     config->bWii = true;
     *region = tmd.GetRegion();
     return true;
@@ -935,7 +917,7 @@ struct SetGameMetadata
       PanicAlertT("This title cannot be booted.");
       return false;
     }
-    config->SetRunningGameMetadata(tmd);
+    config->SetRunningGameMetadata(tmd, DiscIO::Platform::WiiWAD);
     config->bWii = true;
     *region = tmd.GetRegion();
     return true;

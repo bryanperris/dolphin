@@ -36,7 +36,7 @@ struct NetSettings
   bool m_ReducePollingRate;
   bool m_OCEnable;
   float m_OCFactor;
-  std::array<ExpansionInterface::TEXIDevices, 2> m_EXIDevice;
+  std::array<ExpansionInterface::TEXIDevices, 3> m_EXIDevice;
   bool m_EFBAccessEnable;
   bool m_BBoxEnable;
   bool m_ForceProgressive;
@@ -122,6 +122,7 @@ enum
   NP_MSG_CHUNKED_DATA_PAYLOAD = 0x42,
   NP_MSG_CHUNKED_DATA_PROGRESS = 0x43,
   NP_MSG_CHUNKED_DATA_COMPLETE = 0x44,
+  NP_MSG_CHUNKED_DATA_ABORT = 0x45,
 
   NP_MSG_PAD_DATA = 0x60,
   NP_MSG_PAD_MAPPING = 0x61,

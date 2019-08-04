@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Common/CommonTypes.h"
@@ -42,10 +43,14 @@ public:
   class Control  // input or output
   {
   public:
+    virtual ~Control() = default;
     virtual std::string GetName() const = 0;
-    virtual ~Control() {}
     virtual Input* ToInput() { return nullptr; }
     virtual Output* ToOutput() { return nullptr; }
+
+    // May be overridden to allow multiple valid names.
+    // Useful for backwards-compatible configurations when names change.
+    virtual bool IsMatchingName(std::string_view name) const;
   };
 
   //
@@ -107,19 +112,20 @@ public:
   const std::vector<Input*>& Inputs() const { return m_inputs; }
   const std::vector<Output*>& Outputs() const { return m_outputs; }
 
-  Input* FindInput(const std::string& name) const;
-  Output* FindOutput(const std::string& name) const;
+  Input* FindInput(std::string_view name) const;
+  Output* FindOutput(std::string_view name) const;
 
 protected:
   void AddInput(Input* const i);
   void AddOutput(Output* const o);
 
-  class FullAnalogSurface : public Input
+  class FullAnalogSurface final : public Input
   {
   public:
     FullAnalogSurface(Input* low, Input* high) : m_low(*low), m_high(*high) {}
     ControlState GetState() const override;
-    std::string GetName() const override { return m_low.GetName() + *m_high.GetName().rbegin(); }
+    std::string GetName() const override;
+    bool IsMatchingName(std::string_view name) const override;
 
   private:
     Input& m_low;
@@ -150,8 +156,8 @@ class DeviceQualifier
 {
 public:
   DeviceQualifier() : cid(-1) {}
-  DeviceQualifier(const std::string& _source, const int _id, const std::string& _name)
-      : source(_source), cid(_id), name(_name)
+  DeviceQualifier(std::string source_, const int id_, std::string name_)
+      : source(std::move(source_)), cid(id_), name(std::move(name_))
   {
   }
   void FromDevice(const Device* const dev);
@@ -172,8 +178,8 @@ public:
 class DeviceContainer
 {
 public:
-  Device::Input* FindInput(const std::string& name, const Device* def_dev) const;
-  Device::Output* FindOutput(const std::string& name, const Device* def_dev) const;
+  Device::Input* FindInput(std::string_view name, const Device* def_dev) const;
+  Device::Output* FindOutput(std::string_view name, const Device* def_dev) const;
 
   std::vector<std::string> GetAllDeviceStrings() const;
   std::string GetDefaultDeviceString() const;
@@ -182,7 +188,7 @@ public:
   bool HasConnectedDevice(const DeviceQualifier& qualifier) const;
 
   std::pair<std::shared_ptr<Device>, Device::Input*>
-  DetectInput(u32 wait_ms, std::vector<std::string> device_strings);
+  DetectInput(u32 wait_ms, const std::vector<std::string>& device_strings) const;
 
 protected:
   mutable std::mutex m_devices_mutex;

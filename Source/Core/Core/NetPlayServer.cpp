@@ -24,6 +24,7 @@
 #include "Common/ENetUtil.h"
 #include "Common/File.h"
 #include "Common/FileUtil.h"
+#include "Common/HttpRequest.h"
 #include "Common/Logging/Log.h"
 #include "Common/MsgHandler.h"
 #include "Common/SFMLHelper.h"
@@ -47,6 +48,7 @@
 #include "Core/IOS/ES/ES.h"
 #include "Core/IOS/FS/FileSystem.h"
 #include "Core/IOS/IOS.h"
+#include "Core/IOS/Uids.h"
 #include "Core/NetPlayClient.h"  //for NetPlayUI
 #include "DiscIO/Enums.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Attachments.h"
@@ -132,6 +134,8 @@ NetPlayServer::NetPlayServer(const u16 port, const bool forward_port,
     m_server = enet_host_create(&serverAddr, 10, CHANNEL_COUNT, 0, 0);
     if (m_server != nullptr)
       m_server->intercept = ENetUtil::InterceptCallback;
+
+    SetupIndex();
   }
   if (m_server != nullptr)
   {
@@ -162,6 +166,57 @@ static void ClearPeerPlayerId(ENetPeer* peer)
   }
 }
 
+void NetPlayServer::SetupIndex()
+{
+  if (!Config::Get(Config::NETPLAY_USE_INDEX))
+    return;
+
+  NetPlaySession session;
+
+  session.name = Config::Get(Config::NETPLAY_INDEX_NAME);
+  session.region = Config::Get(Config::NETPLAY_INDEX_REGION);
+  session.has_password = !Config::Get(Config::NETPLAY_INDEX_PASSWORD).empty();
+  session.method = m_traversal_client ? "traversal" : "direct";
+  session.game_id = m_selected_game.empty() ? "UNKNOWN" : m_selected_game;
+  session.player_count = static_cast<int>(m_players.size());
+  session.in_game = m_is_running;
+  session.port = GetPort();
+
+  if (m_traversal_client)
+  {
+    if (m_traversal_client->GetState() != TraversalClient::Connected)
+      return;
+
+    session.server_id = std::string(g_TraversalClient->GetHostID().data(), 8);
+  }
+  else
+  {
+    Common::HttpRequest request;
+    // ENet does not support IPv6, so IPv4 has to be used
+    request.UseIPv4();
+    Common::HttpRequest::Response response =
+        request.Get("https://ip.dolphin-emu.org/", {{"X-Is-Dolphin", "1"}});
+
+    if (!response.has_value())
+      return;
+
+    session.server_id = std::string(response->begin(), response->end());
+  }
+
+  session.EncryptID(Config::Get(Config::NETPLAY_INDEX_PASSWORD));
+
+  if (m_dialog != nullptr)
+  {
+    bool success = m_index.Add(session);
+    m_dialog->OnIndexAdded(success, success ? "" : m_index.GetLastError());
+  }
+
+  m_index.SetErrorCallback([this] {
+    if (m_dialog != nullptr)
+      m_dialog->OnIndexRefreshFailed(m_index.GetLastError());
+  });
+}
+
 // called from ---NETPLAY--- thread
 void NetPlayServer::ThreadFunc()
 {
@@ -178,6 +233,11 @@ void NetPlayServer::ThreadFunc()
 
       m_ping_timer.Start();
       SendToClients(spac);
+
+      m_index.SetPlayerCount(static_cast<int>(m_players.size()));
+      m_index.SetGame(m_selected_game);
+      m_index.SetInGame(m_is_running);
+
       m_update_pings = false;
     }
 
@@ -283,7 +343,7 @@ void NetPlayServer::ThreadFunc()
     ClearPeerPlayerId(player_entry.second.socket);
     enet_peer_disconnect(player_entry.second.socket, 0);
   }
-}
+}  // namespace NetPlay
 
 // called from ---NETPLAY--- thread
 unsigned int NetPlayServer::OnConnect(ENetPeer* socket, sf::Packet& rpac)
@@ -306,8 +366,8 @@ unsigned int NetPlayServer::OnConnect(ENetPeer* socket, sf::Packet& rpac)
   if (npver != Common::scm_rev_git_str)
     return CON_ERR_VERSION_MISMATCH;
 
-  // game is currently running
-  if (m_is_running)
+  // game is currently running or game start is pending
+  if (m_is_running || m_start_pending)
     return CON_ERR_GAME_RUNNING;
 
   // too many players
@@ -434,6 +494,13 @@ unsigned int NetPlayServer::OnDisconnect(const Client& player)
         break;
       }
     }
+  }
+
+  if (m_start_pending)
+  {
+    ChunkedDataAbort();
+    m_dialog->OnGameStartAborted();
+    m_start_pending = false;
   }
 
   sf::Packet spac;
@@ -985,7 +1052,7 @@ unsigned int NetPlayServer::OnData(sf::Packet& packet, Client& player)
         m_save_data_synced_players++;
         if (m_save_data_synced_players >= m_players.size() - 1)
         {
-          m_dialog->AppendChat(GetStringT("All players' saves synchronized."));
+          m_dialog->AppendChat(Common::GetStringT("All players' saves synchronized."));
 
           // Saves are synced, check if codes are as well and attempt to start the game
           m_saves_synced = true;
@@ -997,9 +1064,10 @@ unsigned int NetPlayServer::OnData(sf::Packet& packet, Client& player)
 
     case SYNC_SAVE_DATA_FAILURE:
     {
-      m_dialog->AppendChat(
-          StringFromFormat(GetStringT("%s failed to synchronize.").c_str(), player.name.c_str()));
-      m_dialog->OnSaveDataSyncFailure();
+      m_dialog->AppendChat(StringFromFormat(Common::GetStringT("%s failed to synchronize.").c_str(),
+                                            player.name.c_str()));
+      m_dialog->OnGameStartAborted();
+      ChunkedDataAbort();
       m_start_pending = false;
     }
     break;
@@ -1028,7 +1096,7 @@ unsigned int NetPlayServer::OnData(sf::Packet& packet, Client& player)
       {
         if (++m_codes_synced_players >= m_players.size() - 1)
         {
-          m_dialog->AppendChat(GetStringT("All players' codes synchronized."));
+          m_dialog->AppendChat(Common::GetStringT("All players' codes synchronized."));
 
           // Codes are synced, check if saves are as well and attempt to start the game
           m_codes_synced = true;
@@ -1040,8 +1108,9 @@ unsigned int NetPlayServer::OnData(sf::Packet& packet, Client& player)
 
     case SYNC_CODES_FAILURE:
     {
-      m_dialog->AppendChat(StringFromFormat(GetStringT("%s failed to synchronize codes.").c_str(),
-                                            player.name.c_str()));
+      m_dialog->AppendChat(StringFromFormat(
+          Common::GetStringT("%s failed to synchronize codes.").c_str(), player.name.c_str()));
+      m_dialog->OnGameStartAborted();
       m_start_pending = false;
     }
     break;
@@ -1067,10 +1136,13 @@ unsigned int NetPlayServer::OnData(sf::Packet& packet, Client& player)
 
 void NetPlayServer::OnTraversalStateChanged()
 {
+  const TraversalClient::State state = m_traversal_client->GetState();
+
+  if (g_TraversalClient->GetHostID()[0] != '\0')
+    SetupIndex();
+
   if (!m_dialog)
     return;
-
-  const TraversalClient::State state = m_traversal_client->GetState();
 
   if (state == TraversalClient::Failure)
     m_dialog->OnTraversalError(m_traversal_client->GetFailureReason());
@@ -1288,6 +1360,16 @@ bool NetPlayServer::StartGame()
   return true;
 }
 
+void NetPlayServer::AbortGameStart()
+{
+  if (m_start_pending)
+  {
+    m_dialog->OnGameStartAborted();
+    ChunkedDataAbort();
+    m_start_pending = false;
+  }
+}
+
 // called from ---GUI--- thread
 bool NetPlayServer::SyncSaveData()
 {
@@ -1440,6 +1522,28 @@ bool NetPlayServer::SyncSaveData()
     sf::Packet pac;
     pac << static_cast<MessageId>(NP_MSG_SYNC_SAVE_DATA);
     pac << static_cast<MessageId>(SYNC_SAVE_DATA_WII);
+
+    // Shove the Mii data into the start the packet
+    {
+      auto file = configured_fs->OpenFile(IOS::PID_KERNEL, IOS::PID_KERNEL,
+                                          Common::GetMiiDatabasePath(), IOS::HLE::FS::Mode::Read);
+      if (file)
+      {
+        pac << true;
+
+        std::vector<u8> file_data(file->GetStatus()->size);
+        if (!file->Read(file_data.data(), file_data.size()))
+          return false;
+        if (!CompressBufferIntoPacket(file_data, pac))
+          return false;
+      }
+      else
+      {
+        pac << false;  // no mii data
+      }
+    }
+
+    // Carry on with the save files
     pac << static_cast<u32>(saves.size());
 
     for (const auto& pair : saves)
@@ -1904,10 +2008,21 @@ void NetPlayServer::ChunkedDataThreadFunc()
   {
     m_chunked_data_event.Wait();
 
+    if (m_abort_chunked_data)
+    {
+      // thread-safe clear
+      while (!m_chunked_data_queue.Empty())
+        m_chunked_data_queue.Pop();
+
+      m_abort_chunked_data = false;
+    }
+
     while (!m_chunked_data_queue.Empty())
     {
       if (!m_do_loop)
         return;
+      if (m_abort_chunked_data)
+        break;
       auto& e = m_chunked_data_queue.Front();
       const u32 id = m_next_chunked_data_id++;
 
@@ -1943,15 +2058,27 @@ void NetPlayServer::ChunkedDataThreadFunc()
       const float bytes_per_second =
           (std::max(Config::Get(Config::NETPLAY_CHUNKED_UPLOAD_LIMIT), 1u) / 8.0f) * 1024.0f;
       const std::chrono::duration<double> send_interval(CHUNKED_DATA_UNIT_SIZE / bytes_per_second);
+      bool skip_wait = false;
       size_t index = 0;
       do
       {
         if (!m_do_loop)
           return;
+        if (m_abort_chunked_data)
+        {
+          sf::Packet pac;
+          pac << static_cast<MessageId>(NP_MSG_CHUNKED_DATA_ABORT);
+          pac << id;
+          ChunkedDataSend(std::move(pac), e.target_pid, e.target_mode);
+          break;
+        }
         if (e.target_mode == TargetMode::Only)
         {
           if (m_players.find(e.target_pid) == m_players.end())
+          {
+            skip_wait = true;
             break;
+          }
         }
 
         auto start = std::chrono::steady_clock::now();
@@ -1972,6 +2099,7 @@ void NetPlayServer::ChunkedDataThreadFunc()
         }
       } while (index < e.packet.getDataSize());
 
+      if (!m_abort_chunked_data)
       {
         sf::Packet pac;
         pac << static_cast<MessageId>(NP_MSG_CHUNKED_DATA_END);
@@ -1979,9 +2107,10 @@ void NetPlayServer::ChunkedDataThreadFunc()
         ChunkedDataSend(std::move(pac), e.target_pid, e.target_mode);
       }
 
-      while (m_chunked_data_complete_count[id] < player_count && m_do_loop)
+      while (m_chunked_data_complete_count[id] < player_count && m_do_loop &&
+             !m_abort_chunked_data && !skip_wait)
         m_chunked_data_complete_event.Wait();
-      m_chunked_data_complete_count.erase(m_chunked_data_complete_count.find(id));
+      m_chunked_data_complete_count.erase(id);
       m_dialog->HideChunkedProgressDialog();
 
       m_chunked_data_queue.Pop();
@@ -2001,5 +2130,12 @@ void NetPlayServer::ChunkedDataSend(sf::Packet&& packet, const PlayerId pid,
   {
     SendAsyncToClients(std::move(packet), pid, CHUNKED_DATA_CHANNEL);
   }
+}
+
+void NetPlayServer::ChunkedDataAbort()
+{
+  m_abort_chunked_data = true;
+  m_chunked_data_event.Set();
+  m_chunked_data_complete_event.Set();
 }
 }  // namespace NetPlay

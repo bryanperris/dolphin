@@ -32,6 +32,7 @@
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HW/DVD/DVDInterface.h"
+#include "Core/HW/EXI/EXI_Device.h"
 #include "Core/HW/WiiSave.h"
 #include "Core/WiiUtils.h"
 
@@ -322,7 +323,7 @@ void GameList::ShowContextMenu(const QPoint&)
     if (platform == DiscIO::Platform::WiiDisc)
     {
       auto* perform_disc_update = menu->addAction(tr("Perform System Update"), this,
-                                                  [ this, file_path = game->GetFilePath() ] {
+                                                  [this, file_path = game->GetFilePath()] {
                                                     WiiUpdate::PerformDiscUpdate(file_path, this);
                                                   });
       perform_disc_update->setEnabled(!Core::IsRunning() || !SConfig::GetInstance().bWii);

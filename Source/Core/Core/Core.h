@@ -66,6 +66,7 @@ void Callback_WiimoteInterruptChannel(int number, u16 channel_id, const u8* data
 void DisplayMessage(const std::string& message, int time_in_ms);
 
 void FrameUpdateOnCPUThread();
+void OnFrameEnd();
 
 void VideoThrottle();
 void RequestRefreshInfo();
@@ -80,6 +81,10 @@ void UpdateTitle();
 //
 // This should only be called from the CPU thread or the host thread.
 void RunAsCPUThread(std::function<void()> function);
+
+// Run a function on the CPU thread, asynchronously.
+// This is only valid to call from the host thread, since it uses PauseAndLock() internally.
+void RunOnCPUThread(std::function<void()> function, bool wait_for_completion);
 
 // for calling back into UI code without introducing a dependency on it in core
 using StateChangedCallbackFunc = std::function<void(Core::State)>;

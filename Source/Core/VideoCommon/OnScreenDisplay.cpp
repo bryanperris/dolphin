@@ -11,6 +11,7 @@
 #include "imgui.h"
 
 #include "Common/CommonTypes.h"
+#include "Common/StringUtil.h"
 #include "Common/Timer.h"
 
 #include "Core/ConfigManager.h"
@@ -125,4 +126,4 @@ void ClearMessages()
   std::lock_guard<std::mutex> lock(s_messages_mutex);
   s_messages.clear();
 }
-}
+}  // namespace OSD

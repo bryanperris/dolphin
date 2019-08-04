@@ -49,14 +49,14 @@ MappingButton::MappingButton(MappingWidget* parent, ControlReference* ref, bool 
   setFixedHeight(minimumSizeHint().height());
 
   // Make sure that long entries don't throw our layout out of whack.
-  setFixedWidth(112);
+  setFixedWidth(WIDGET_MAX_WIDTH);
 
   setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 
   setToolTip(
       tr("Left-click to detect input.\nMiddle-click to clear.\nRight-click for more options."));
 
-  connect(this, &MappingButton::pressed, this, &MappingButton::Detect);
+  connect(this, &MappingButton::clicked, this, &MappingButton::Detect);
 
   if (indicator)
     connect(parent, &MappingWidget::Update, this, &MappingButton::UpdateIndicator);
@@ -104,9 +104,6 @@ void MappingButton::Detect()
 
   ConfigChanged();
   m_parent->SaveSettings();
-
-  if (m_parent->IsIterativeInput())
-    m_parent->NextButton(this);
 }
 
 void MappingButton::Clear()
@@ -128,16 +125,11 @@ void MappingButton::UpdateIndicator()
   const auto state = m_reference->State();
 
   QFont f = m_parent->font();
-  QPalette p = m_parent->palette();
 
   if (state > ControllerEmu::Buttons::ACTIVATION_THRESHOLD)
-  {
     f.setBold(true);
-    p.setColor(QPalette::ButtonText, Qt::red);
-  }
 
   setFont(f);
-  setPalette(p);
 }
 
 void MappingButton::ConfigChanged()

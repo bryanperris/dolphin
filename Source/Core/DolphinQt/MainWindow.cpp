@@ -44,6 +44,7 @@
 #include "Core/HW/GCKeyboard.h"
 #include "Core/HW/GCPad.h"
 #include "Core/HW/ProcessorInterface.h"
+#include "Core/HW/SI/SI_Device.h"
 #include "Core/HW/Wiimote.h"
 #include "Core/HW/WiimoteEmu/WiimoteEmu.h"
 #include "Core/HotkeyManager.h"
@@ -80,8 +81,10 @@
 #include "DolphinQt/HotkeyScheduler.h"
 #include "DolphinQt/MainWindow.h"
 #include "DolphinQt/MenuBar.h"
+#include "DolphinQt/NetPlay/NetPlayBrowser.h"
 #include "DolphinQt/NetPlay/NetPlayDialog.h"
 #include "DolphinQt/NetPlay/NetPlaySetupDialog.h"
+#include "DolphinQt/QtUtils/FileOpenEventFilter.h"
 #include "DolphinQt/QtUtils/ModalMessageBox.h"
 #include "DolphinQt/QtUtils/QueueOnObject.h"
 #include "DolphinQt/QtUtils/RunOnObject.h"
@@ -334,6 +337,12 @@ void MainWindow::InitCoreCallbacks()
   });
   installEventFilter(this);
   m_render_widget->installEventFilter(this);
+
+  // Handle file open events
+  auto* filter = new FileOpenEventFilter(QGuiApplication::instance());
+  connect(filter, &FileOpenEventFilter::fileOpened, this, [=](const QString& file_name) {
+    StartGame(BootParameters::GenerateFromFile(file_name.toStdString()));
+  });
 }
 
 static void InstallHotkeyFilter(QWidget* dialog)
@@ -453,6 +462,7 @@ void MainWindow::ConnectMenuBar()
   connect(m_menu_bar, &MenuBar::PerformOnlineUpdate, this, &MainWindow::PerformOnlineUpdate);
   connect(m_menu_bar, &MenuBar::BootWiiSystemMenu, this, &MainWindow::BootWiiSystemMenu);
   connect(m_menu_bar, &MenuBar::StartNetPlay, this, &MainWindow::ShowNetPlaySetupDialog);
+  connect(m_menu_bar, &MenuBar::BrowseNetPlay, this, &MainWindow::ShowNetPlayBrowser);
   connect(m_menu_bar, &MenuBar::ShowFIFOPlayer, this, &MainWindow::ShowFIFOPlayer);
   connect(m_menu_bar, &MenuBar::ConnectWiiRemote, this, &MainWindow::OnConnectWiiRemote);
 
@@ -936,20 +946,20 @@ void MainWindow::StartGame(std::unique_ptr<BootParameters>&& parameters)
     Discord::UpdateDiscordPresence();
 #endif
 
-  if (SConfig::GetInstance().bFullscreen)
+  if (Config::Get(Config::MAIN_FULLSCREEN))
     m_fullscreen_requested = true;
 
 #ifdef Q_OS_WIN
   // Prevents Windows from sleeping, turning off the display, or idling
   EXECUTION_STATE shouldScreenSave =
-      SConfig::GetInstance().bDisableScreenSaver ? ES_DISPLAY_REQUIRED : 0;
+      Config::Get(Config::MAIN_DISABLE_SCREENSAVER) ? ES_DISPLAY_REQUIRED : 0;
   SetThreadExecutionState(ES_CONTINUOUS | shouldScreenSave | ES_SYSTEM_REQUIRED);
 #endif
 }
 
 void MainWindow::SetFullScreenResolution(bool fullscreen)
 {
-  if (SConfig::GetInstance().strFullscreenResolution == "Auto")
+  if (Config::Get(Config::MAIN_FULLSCREEN_DISPLAY_RES) == "Auto")
     return;
 #ifdef _WIN32
 
@@ -962,7 +972,7 @@ void MainWindow::SetFullScreenResolution(bool fullscreen)
   DEVMODE screen_settings;
   memset(&screen_settings, 0, sizeof(screen_settings));
   screen_settings.dmSize = sizeof(screen_settings);
-  sscanf(SConfig::GetInstance().strFullscreenResolution.c_str(), "%dx%d",
+  sscanf(Config::Get(Config::MAIN_FULLSCREEN_DISPLAY_RES).c_str(), "%dx%d",
          &screen_settings.dmPelsWidth, &screen_settings.dmPelsHeight);
   screen_settings.dmBitsPerPel = 32;
   screen_settings.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
@@ -980,7 +990,7 @@ void MainWindow::ShowRenderWidget()
   SetFullScreenResolution(false);
   Host::GetInstance()->SetRenderFullscreen(false);
 
-  if (SConfig::GetInstance().bRenderToMain)
+  if (Config::Get(Config::MAIN_RENDER_TO_MAIN))
   {
     // If we're rendering to main, add it to the stack and update our title when necessary.
     m_rendering_to_main = true;
@@ -1131,6 +1141,13 @@ void MainWindow::ShowNetPlaySetupDialog()
   m_netplay_setup_dialog->activateWindow();
 }
 
+void MainWindow::ShowNetPlayBrowser()
+{
+  auto* browser = new NetPlayBrowser(this);
+  connect(browser, &NetPlayBrowser::Join, this, &MainWindow::NetPlayJoin);
+  browser->exec();
+}
+
 void MainWindow::ShowFIFOPlayer()
 {
   if (!m_fifo_window)
@@ -1166,8 +1183,7 @@ void MainWindow::StateLoadSlot()
 
 void MainWindow::StateSaveSlot()
 {
-  State::Save(m_state_slot, true);
-  m_menu_bar->UpdateStateSlotMenu();
+  State::Save(m_state_slot);
 }
 
 void MainWindow::StateLoadSlotAt(int slot)
@@ -1182,8 +1198,7 @@ void MainWindow::StateLoadLastSavedAt(int slot)
 
 void MainWindow::StateSaveSlotAt(int slot)
 {
-  State::Save(slot, true);
-  m_menu_bar->UpdateStateSlotMenu();
+  State::Save(slot);
 }
 
 void MainWindow::StateLoadUndo()
@@ -1285,7 +1300,8 @@ bool MainWindow::NetPlayJoin()
   const std::string traversal_host = Config::Get(Config::NETPLAY_TRAVERSAL_SERVER);
   const u16 traversal_port = Config::Get(Config::NETPLAY_TRAVERSAL_PORT);
   const std::string nickname = Config::Get(Config::NETPLAY_NICKNAME);
-  const bool host_input_authority = Config::Get(Config::NETPLAY_HOST_INPUT_AUTHORITY);
+  const std::string network_mode = Config::Get(Config::NETPLAY_NETWORK_MODE);
+  const bool host_input_authority = network_mode == "hostinputauthority" || network_mode == "golf";
 
   if (server)
   {

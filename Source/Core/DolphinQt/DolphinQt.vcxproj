@@ -81,7 +81,6 @@
     <QtMoc Include="Config\Mapping\HotkeyTAS.h" />
     <QtMoc Include="Config\Mapping\HotkeyWii.h" />
     <QtMoc Include="Config\Mapping\IOWindow.h" />
-    <QtMoc Include="Config\Mapping\MappingBool.h" />
     <QtMoc Include="Config\Mapping\MappingButton.h" />
     <QtMoc Include="Config\Mapping\MappingIndicator.h" />
     <QtMoc Include="Config\Mapping\MappingNumeric.h" />
@@ -98,6 +97,7 @@
     <QtMoc Include="Config\Graphics\GeneralWidget.h" />
     <QtMoc Include="Config\Graphics\GraphicsBool.h" />
     <QtMoc Include="Config\Graphics\GraphicsChoice.h" />
+    <QtMoc Include="Config\Graphics\GraphicsInteger.h" />
     <QtMoc Include="Config\Graphics\GraphicsRadio.h" />
     <QtMoc Include="Config\Graphics\GraphicsSlider.h" />
     <QtMoc Include="Config\Graphics\GraphicsWidget.h" />
@@ -109,6 +109,7 @@
     <QtMoc Include="Config\PatchesWidget.h" />
     <QtMoc Include="Config\PropertiesDialog.h" />
     <QtMoc Include="Config\SettingsWindow.h" />
+    <QtMoc Include="Config\VerifyWidget.h" />
     <QtMoc Include="DiscordHandler.h" />
     <QtMoc Include="DiscordJoinRequestDialog.h" />
     <QtMoc Include="FIFO\FIFOAnalyzer.h" />
@@ -126,6 +127,7 @@
     <QtMoc Include="Debugger\MemoryWidget.h" />
     <QtMoc Include="Debugger\MemoryViewWidget.h" />
     <QtMoc Include="Debugger\NewBreakpointDialog.h" />
+    <QtMoc Include="Debugger\PatchInstructionDialog.h" />
     <QtMoc Include="Debugger\RegisterWidget.h" />
     <QtMoc Include="Debugger\WatchWidget.h" />
     <QtMoc Include="GCMemcardManager.h" />
@@ -147,6 +149,7 @@
     <QtMoc Include="NetPlay\ChunkedProgressDialog.h" />
     <QtMoc Include="NetPlay\GameListDialog.h" />
     <QtMoc Include="NetPlay\MD5Dialog.h" />
+    <QtMoc Include="NetPlay\NetPlayBrowser.h" />
     <QtMoc Include="NetPlay\NetPlayDialog.h" />
     <QtMoc Include="NetPlay\NetPlaySetupDialog.h" />
     <QtMoc Include="NetPlay\PadMappingDialog.h" />
@@ -154,6 +157,7 @@
     <QtMoc Include="QtUtils\BlockUserInputFilter.h" />
     <QtMoc Include="QtUtils\DoubleClickEventFilter.h" />
     <QtMoc Include="QtUtils\ElidedButton.h" />
+    <QtMoc Include="QtUtils\FileOpenEventFilter.h" />
     <QtMoc Include="QtUtils\FlowLayout.h" />
     <QtMoc Include="QtUtils\ModalMessageBox.h" />
     <QtMoc Include="QtUtils\WindowActivationEventFilter.h" />
@@ -191,6 +195,7 @@
     <ClCompile Include="$(QtMocOutPrefix)EnhancementsWidget.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)FIFOAnalyzer.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)FIFOPlayerWindow.cpp" />
+    <ClCompile Include="$(QtMocOutPrefix)FileOpenEventFilter.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)FilesystemWidget.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)GCKeyboardEmu.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)GCMemcardManager.cpp" />
@@ -211,6 +216,7 @@
     <ClCompile Include="$(QtMocOutPrefix)GeneralWidget.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)GraphicsBool.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)GraphicsChoice.cpp" />
+    <ClCompile Include="$(QtMocOutPrefix)GraphicsInteger.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)GraphicsRadio.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)GraphicsSlider.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)GraphicsWidget.cpp" />
@@ -238,7 +244,6 @@
     <ClCompile Include="$(QtMocOutPrefix)LogWidget.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)MD5Dialog.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)MainWindow.cpp" />
-    <ClCompile Include="$(QtMocOutPrefix)MappingBool.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)MappingButton.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)MappingIndicator.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)MappingNumeric.cpp" />
@@ -248,12 +253,14 @@
     <ClCompile Include="$(QtMocOutPrefix)MemoryWidget.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)MenuBar.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)ModalMessageBox.cpp" />
+    <ClCompile Include="$(QtMocOutPrefix)NetPlayBrowser.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)NetPlayDialog.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)NetPlaySetupDialog.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)NewBreakpointDialog.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)NewPatchDialog.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)PadMappingDialog.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)PatchesWidget.cpp" />
+    <ClCompile Include="$(QtMocOutPrefix)PatchInstructionDialog.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)PathPane.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)PostProcessingConfigWindow.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)PropertiesDialog.cpp" />
@@ -269,6 +276,7 @@
     <ClCompile Include="$(QtMocOutPrefix)ToolBar.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)USBDeviceAddToWhitelistDialog.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)Updater.cpp" />
+    <ClCompile Include="$(QtMocOutPrefix)VerifyWidget.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)WatchWidget.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)WiiPane.cpp" />
     <ClCompile Include="$(QtMocOutPrefix)WiiTASInputWindow.cpp" />
@@ -293,6 +301,7 @@
     <ClCompile Include="Config\Graphics\GeneralWidget.cpp" />
     <ClCompile Include="Config\Graphics\GraphicsBool.cpp" />
     <ClCompile Include="Config\Graphics\GraphicsChoice.cpp" />
+    <ClCompile Include="Config\Graphics\GraphicsInteger.cpp" />
     <ClCompile Include="Config\Graphics\GraphicsRadio.cpp" />
     <ClCompile Include="Config\Graphics\GraphicsSlider.cpp" />
     <ClCompile Include="Config\Graphics\GraphicsWidget.cpp" />
@@ -314,12 +323,10 @@
     <ClCompile Include="Config\Mapping\HotkeyTAS.cpp" />
     <ClCompile Include="Config\Mapping\HotkeyWii.cpp" />
     <ClCompile Include="Config\Mapping\IOWindow.cpp" />
-    <ClCompile Include="Config\Mapping\MappingBool.cpp" />
     <ClCompile Include="Config\Mapping\MappingButton.cpp" />
     <ClCompile Include="Config\Mapping\MappingCommon.cpp" />
     <ClCompile Include="Config\Mapping\MappingIndicator.cpp" />
     <ClCompile Include="Config\Mapping\MappingNumeric.cpp" />
-    <ClCompile Include="Config\Mapping\MappingRadio.cpp" />
     <ClCompile Include="Config\Mapping\MappingWidget.cpp" />
     <ClCompile Include="Config\Mapping\MappingWindow.cpp" />
     <ClCompile Include="Config\Mapping\WiimoteEmuExtension.cpp" />
@@ -331,6 +338,7 @@
     <ClCompile Include="Config\PatchesWidget.cpp" />
     <ClCompile Include="Config\PropertiesDialog.cpp" />
     <ClCompile Include="Config\SettingsWindow.cpp" />
+    <ClCompile Include="Config\VerifyWidget.cpp" />
     <ClCompile Include="Debugger\CodeViewWidget.cpp" />
     <ClCompile Include="Debugger\CodeWidget.cpp" />
     <ClCompile Include="Debugger\JITWidget.cpp" />
@@ -350,6 +358,7 @@
     <ClCompile Include="TAS\IRWidget.cpp" />
     <ClCompile Include="Debugger\BreakpointWidget.cpp" />
     <ClCompile Include="Debugger\NewBreakpointDialog.cpp" />
+    <ClCompile Include="Debugger\PatchInstructionDialog.cpp" />
     <ClCompile Include="Debugger\RegisterColumn.cpp" />
     <ClCompile Include="Debugger\RegisterWidget.cpp" />
     <ClCompile Include="Debugger\WatchWidget.cpp" />
@@ -367,6 +376,7 @@
     <ClCompile Include="NetPlay\ChunkedProgressDialog.cpp" />
     <ClCompile Include="NetPlay\GameListDialog.cpp" />
     <ClCompile Include="NetPlay\MD5Dialog.cpp" />
+    <ClCompile Include="NetPlay\NetPlayBrowser.cpp" />
     <ClCompile Include="NetPlay\NetPlayDialog.cpp" />
     <ClCompile Include="NetPlay\NetPlaySetupDialog.cpp" />
     <ClCompile Include="NetPlay\PadMappingDialog.cpp" />
@@ -374,6 +384,7 @@
     <ClCompile Include="QtUtils\BlockUserInputFilter.cpp" />
     <ClCompile Include="QtUtils\DoubleClickEventFilter.cpp" />
     <ClCompile Include="QtUtils\ElidedButton.cpp" />
+    <ClCompile Include="QtUtils\FileOpenEventFilter.cpp" />
     <ClCompile Include="QtUtils\FlowLayout.cpp" />
     <ClCompile Include="QtUtils\ImageConverter.cpp" />
     <ClCompile Include="QtUtils\ModalMessageBox.cpp" />
@@ -399,7 +410,6 @@
   <!--Put standard C/C++ headers here. Headers that are listed in the QtMoc ItemGroup must NOT be listed here.-->
   <ItemGroup>
     <ClInclude Include="Config\Mapping\MappingCommon.h" />
-    <ClInclude Include="Config\Mapping\MappingRadio.h" />
     <ClInclude Include="Debugger\RegisterColumn.h" />
     <ClInclude Include="QtUtils\ActionHelper.h" />
     <ClInclude Include="QtUtils\ImageConverter.h" />
